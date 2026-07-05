@@ -204,5 +204,7 @@
     ]);
   }
 
-  SDK.registerPluginDashboard('runtime-approval', RuntimeApprovalDashboard);
+  if (window.__HERMES_PLUGINS__ && typeof window.__HERMES_PLUGINS__.register === "function") {
+    window.__HERMES_PLUGINS__.register("runtime-approval", RuntimeApprovalDashboard);
+  }
 })();
