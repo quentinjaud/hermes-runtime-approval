@@ -25,6 +25,18 @@
     return MATCHABLE_FIELDS[toolName] || [];
   }
 
+  // The SDK's Select component fires onValueChange(value) directly
+  // (shadcn-style popup, not a native <select>). Wire both signatures.
+  function selectHandler(setter) {
+    return {
+      onValueChange: function (v) { setter(v == null ? '' : v); },
+      onChange: function (e) {
+        var v = e && e.target ? e.target.value : e;
+        setter(v == null ? '' : v);
+      }
+    };
+  }
+
   function RuntimeApprovalDashboard() {
     const [rules, setRules] = useState([]);
     const [allTools, setAllTools] = useState([]);
@@ -169,14 +181,12 @@
           h('h3', { style: { marginBottom: '12px', fontSize: '16px', fontWeight: '600' } }, 'Default Policy'),
           h('div', null, [
             h(Label, { style: { display: 'block', marginBottom: '4px' } }, 'Default Action (for tools not matched by any rule)'),
-            h(Select, {
+            h(Select, Object.assign({
               value: defaultAction || 'none',
-              onChange: function (e) {
-                var val = e.target.value === 'none' ? null : e.target.value;
-                saveDefaultAction(val);
-              },
               style: { width: '100%' }
-            }, [
+            }, selectHandler(function (v) {
+              saveDefaultAction(v === 'none' ? null : v);
+            })), [
               h(SelectOption, { value: 'none', key: 'none' }, 'None - let unmatched tools pass freely'),
               h(SelectOption, { value: 'approve', key: 'approve' }, 'Approve - prompt human for every unmatched tool'),
               h(SelectOption, { value: 'block', key: 'block' }, 'Block - deny every unmatched tool')
@@ -320,11 +330,12 @@
           // Tool dropdown (dynamic from /api/tools/toolsets)
           h('div', { style: { marginBottom: '16px' } }, [
             h(Label, { style: { display: 'block', marginBottom: '4px' } }, 'Tool'),
-            h(Select, {
+            h(Select, Object.assign({
               value: newRule.tool,
-              onChange: function (e) { setNewRule(Object.assign({}, newRule, { tool: e.target.value })); },
               style: { width: '100%' }
-            }, [
+            }, selectHandler(function (v) {
+              setNewRule(Object.assign({}, newRule, { tool: v }));
+            })), [
               h(SelectOption, { value: '', key: '__none' }, 'Select a tool...'),
               allTools.map(function (tool) {
                 return h(SelectOption, { value: tool, key: tool }, tool);
@@ -334,11 +345,12 @@
           // Action dropdown
           h('div', { style: { marginBottom: '16px' } }, [
             h(Label, { style: { display: 'block', marginBottom: '4px' } }, 'Action'),
-            h(Select, {
+            h(Select, Object.assign({
               value: newRule.action,
-              onChange: function (e) { setNewRule(Object.assign({}, newRule, { action: e.target.value })); },
               style: { width: '100%' }
-            }, [
+            }, selectHandler(function (v) {
+              setNewRule(Object.assign({}, newRule, { action: v }));
+            })), [
               h(SelectOption, { value: 'approve', key: 'approve' }, 'Approve (human gate)'),
               h(SelectOption, { value: 'block', key: 'block' }, 'Block (unconditional)')
             ])
