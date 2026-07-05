@@ -1,0 +1,14 @@
+{
+  "name": "runtime-approval",
+  "label": "Runtime Approval",
+  "description": "Configure runtime approval rules for tool calls",
+  "icon": "ShieldCheck",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/runtime-approval",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

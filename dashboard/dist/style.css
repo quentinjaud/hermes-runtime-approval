@@ -1,0 +1,5 @@
+/* Minimal styling for Runtime Approval Dashboard. 
+   Most components are styled by the Hermes SDK. */
+.runtime-approval-dashboard {
+    font-family: var(--font-sans);
+}
