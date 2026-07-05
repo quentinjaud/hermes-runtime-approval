@@ -20,13 +20,38 @@ This plugin extends the approval system to **any tool call**. Users define rules
 
 ```yaml
 approvals:
+  default_action: approve       # optional: "approve" | "block" — applies to any tool not matched by an explicit rule
+  exempt_tools:                 # optional: tools never gated by default_action
+    - web_search
+    - read_file
+    - session_search
   custom_rules:
-    - tool: write_file          # required: tool name
+    - tool: write_file          # required: tool name (exact match OR regex pattern)
       action: approve           # required: "approve" | "block"
       fields:                   # optional: field -> regex (AND logic)
         path: "\\.ssh/"
       always_allow: false       # optional: currently a no-op (see Limitations)
       message: "Write to sensitive path"  # optional: shown in approval prompt
+```
+
+### `default_action`
+
+When set, any tool call not matched by an explicit `custom_rules` entry is gated with this action. This covers tools you haven't configured yet — new MCP server tools, newly installed plugins, etc.
+
+Example for WebDAV: set `default_action: approve` and exempt your trusted read-only tools. Every new tool (including future WebDAV operations) requires approval until you explicitly exempt or add a rule for it.
+
+### `exempt_tools`
+
+List of tool names that bypass `default_action`. Only meaningful when `default_action` is set. Tools listed here are never gated by the default — only explicit `custom_rules` matching them apply.
+
+### Regex tool names
+
+The `tool` field supports regex via `re.search`. Examples:
+
+```yaml
+- tool: "webdav_.*"     # matches webdav_put, webdav_get, webdav_delete, etc.
+- tool: "http_.*"      # matches any HTTP-prefixed tool
+- tool: "write_file"   # exact match (also works as regex, but no wildcards)
 ```
 
 ## Matchable fields

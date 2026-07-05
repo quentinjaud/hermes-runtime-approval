@@ -9,21 +9,24 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ApprovalRule:
-    tool: str
-    action: str  # "approve" | "block"
+    tool: str          # exact tool name OR regex pattern (matched via re.search)
+    action: str        # "approve" | "block"
     fields: Dict[str, str] = field(default_factory=dict)
     always_allow: bool = False
     message: str = ""
 
-def load_rules() -> List[ApprovalRule]:
+def load_config() -> dict:
+    """Load the full config.yaml as a dict. Returns {} on error."""
     config_path = get_hermes_home() / "config.yaml"
     try:
         with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+            return yaml.safe_load(f) or {}
     except (FileNotFoundError, yaml.YAMLError) as e:
         logger.debug(f"Could not read config.yaml: {e}")
-        return []
+        return {}
 
+def load_rules() -> List[ApprovalRule]:
+    config = load_config()
     if not config:
         return []
 
@@ -56,8 +59,32 @@ def load_rules() -> List[ApprovalRule]:
     
     return rules
 
+def load_default_action() -> Optional[str]:
+    """Return the default_action for unmatched tools, or None if not set."""
+    config = load_config()
+    approvals = config.get("approvals", {})
+    default_action = approvals.get("default_action")
+    if default_action not in ("approve", "block", None):
+        logger.warning(f"Invalid default_action: {default_action}, ignoring")
+        return None
+    return default_action
+
+def load_exempt_tools() -> set:
+    """Return the set of exempt tool names (never gated by default_action)."""
+    config = load_config()
+    approvals = config.get("approvals", {})
+    exempt = approvals.get("exempt_tools", [])
+    if not isinstance(exempt, list):
+        return set()
+    return set(exempt)
+
 def match_rule(rule: ApprovalRule, tool_name: str, args: Dict) -> bool:
-    if rule.tool != tool_name:
+    # Tool name matching: exact match OR regex search
+    if rule.tool == tool_name:
+        pass  # exact match
+    elif re.search(rule.tool, tool_name):
+        pass  # regex match
+    else:
         return False
     
     if not rule.fields:
@@ -69,3 +96,33 @@ def match_rule(rule: ApprovalRule, tool_name: str, args: Dict) -> bool:
             return False
             
     return True
+
+def evaluate(tool_name: str, args: Dict) -> Optional[ApprovalRule]:
+    """Evaluate all rules + default_action against a tool call.
+    
+    Returns the matching ApprovalRule, or None if the call should proceed freely.
+    Priority: explicit custom rules > default_action > pass.
+    """
+    rules = load_rules()
+    
+    # Check explicit rules first
+    for rule in rules:
+        if match_rule(rule, tool_name, args or {}):
+            return rule
+    
+    # Check default_action for unmatched tools
+    default_action = load_default_action()
+    if default_action is None:
+        return None
+    
+    exempt = load_exempt_tools()
+    if tool_name in exempt:
+        return None
+    
+    # default_action applies — synthesize a rule
+    return ApprovalRule(
+        tool=tool_name,
+        action=default_action,
+        fields={},
+        message=f"Default action: {tool_name} requires approval (no explicit rule)"
+    )
