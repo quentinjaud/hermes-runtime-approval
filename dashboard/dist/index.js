@@ -15,6 +15,10 @@
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    const [defaultAction, setDefaultAction] = useState(null);
+    const [exemptTools, setExemptTools] = useState([]);
+    const [exemptInput, setExemptInput] = useState('');
+
     const [newRule, setNewRule] = useState({
       tool: '',
       action: 'approve',
@@ -26,12 +30,16 @@
       setLoading(true);
       setError(null);
       try {
-        const [rulesData, toolsData] = await Promise.all([
+        const [rulesData, toolsData, defaultData, exemptData] = await Promise.all([
           fetchJSON(`${API}/rules`),
-          fetchJSON(`${API}/tools`)
+          fetchJSON(`${API}/tools`),
+          fetchJSON(`${API}/default-action`),
+          fetchJSON(`${API}/exempt-tools`)
         ]);
         setRules(rulesData || []);
         setTools(toolsData || {});
+        setDefaultAction(defaultData.default_action || null);
+        setExemptTools(exemptData.exempt_tools || []);
       } catch (e) {
         setError(String(e.message || e));
       } finally {
@@ -65,6 +73,49 @@
       }
     }
 
+    async function saveDefaultAction(value) {
+      try {
+        const data = await fetchJSON(`${API}/default-action`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ default_action: value })
+        });
+        setDefaultAction(data.default_action);
+      } catch (e) {
+        alert(`Error setting default action: ${e.message || e}`);
+      }
+    }
+
+    async function addExemptTool() {
+      if (!exemptInput.trim()) return;
+      var updated = exemptTools.concat([exemptInput.trim()]);
+      try {
+        const data = await fetchJSON(`${API}/exempt-tools`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exempt_tools: updated })
+        });
+        setExemptTools(data.exempt_tools || []);
+        setExemptInput('');
+      } catch (e) {
+        alert(`Error adding exempt tool: ${e.message || e}`);
+      }
+    }
+
+    async function removeExemptTool(idx) {
+      var updated = exemptTools.filter(function (_, i) { return i !== idx; });
+      try {
+        const data = await fetchJSON(`${API}/exempt-tools`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exempt_tools: updated })
+        });
+        setExemptTools(data.exempt_tools || []);
+      } catch (e) {
+        alert(`Error removing exempt tool: ${e.message || e}`);
+      }
+    }
+
     if (loading) {
       return h('div', { style: { padding: '24px' } }, 'Loading Runtime Approval rules...');
     }
@@ -81,6 +132,63 @@
         h('h1', { style: { fontSize: '24px', fontWeight: 'bold', marginBottom: '8px' } }, 'Runtime Approval'),
         h('p', { style: { opacity: '0.7', fontSize: '14px' } },
           'Runtime-enforced approval rules. The LLM cannot bypass these.')
+      ]),
+
+      // Default Action + Exempt Tools (global policy)
+      h(Card, { style: { marginBottom: '24px' } }, [
+        h(CardContent, { style: { padding: '16px' } }, [
+          h('h3', { style: { marginBottom: '16px', fontSize: '16px', fontWeight: '600' } }, 'Default Policy'),
+
+          // default_action selector
+          h('div', { style: { marginBottom: '16px' } }, [
+            h(Label, { style: { display: 'block', marginBottom: '4px' } }, 'Default Action (for tools not matched by any rule)'),
+            h(Select, {
+              value: defaultAction || 'none',
+              onChange: function (e) {
+                var val = e.target.value === 'none' ? null : e.target.value;
+                saveDefaultAction(val);
+              },
+              style: { width: '100%' }
+            }, [
+              h(SelectOption, { value: 'none', key: 'none' }, 'None (let unmatched tools pass freely)'),
+              h(SelectOption, { value: 'approve', key: 'approve' }, 'Approve (prompt human for every unmatched tool)'),
+              h(SelectOption, { value: 'block', key: 'block' }, 'Block (deny every unmatched tool)')
+            ]),
+            h('p', { style: { fontSize: '12px', opacity: '0.6', marginTop: '4px' } },
+              'Covers new/unknown tools. A new MCP server tool gets gated automatically until you exempt or add a rule for it.')
+          ]),
+
+          // exempt_tools list
+          h('div', null, [
+            h(Label, { style: { display: 'block', marginBottom: '4px' } }, 'Exempt Tools (never gated by default action)'),
+            exemptTools.length === 0
+              ? h('p', { style: { opacity: '0.5', fontSize: '13px', marginBottom: '8px' } }, 'No exempt tools configured.')
+              : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' } },
+                  exemptTools.map(function (tool, idx) {
+                    return h('div', {
+                      key: idx,
+                      style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border)' }
+                    }, [
+                      h(Badge, { variant: 'outline' }, tool),
+                      h(Button, {
+                        variant: 'destructive',
+                        onClick: function () { removeExemptTool(idx); },
+                        style: { fontSize: '11px', padding: '2px 8px' }
+                      }, 'Remove')
+                    ]);
+                  })
+                ),
+            h('div', { style: { display: 'flex', gap: '8px' } }, [
+              h(Input, {
+                value: exemptInput,
+                onChange: function (e) { setExemptInput(e.target.value); },
+                placeholder: 'Tool name to exempt (e.g. web_search)',
+                style: { flex: '1' }
+              }),
+              h(Button, { onClick: addExemptTool }, 'Add')
+            ])
+          ])
+        ])
       ]),
 
       // Active Rules

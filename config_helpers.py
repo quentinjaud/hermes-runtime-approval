@@ -77,6 +77,75 @@ def delete_rule(index: int) -> list[dict]:
         write_rules(rules)
     return rules
 
+def read_default_action() -> str | None:
+    path = get_config_path()
+    if not path.exists():
+        return None
+    try:
+        with open(path, "r") as f:
+            config = yaml.safe_load(f) or {}
+        return config.get("approvals", {}).get("default_action")
+    except Exception:
+        return None
+
+def write_default_action(action: str | None) -> str | None:
+    """Set default_action. None clears it."""
+    path = get_config_path()
+    if path.exists():
+        try:
+            with open(path, "r") as f:
+                config = yaml.safe_load(f) or {}
+        except Exception:
+            config = {}
+    else:
+        config = {}
+    if "approvals" not in config:
+        config["approvals"] = {}
+    if action is None:
+        config["approvals"].pop("default_action", None)
+    else:
+        config["approvals"]["default_action"] = action
+    _atomic_write(config, path)
+    return action
+
+def read_exempt_tools() -> list[str]:
+    path = get_config_path()
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r") as f:
+            config = yaml.safe_load(f) or {}
+        return config.get("approvals", {}).get("exempt_tools", [])
+    except Exception:
+        return []
+
+def write_exempt_tools(tools: list[str]) -> list[str]:
+    path = get_config_path()
+    if path.exists():
+        try:
+            with open(path, "r") as f:
+                config = yaml.safe_load(f) or {}
+        except Exception:
+            config = {}
+    else:
+        config = {}
+    if "approvals" not in config:
+        config["approvals"] = {}
+    config["approvals"]["exempt_tools"] = tools
+    _atomic_write(config, path)
+    return tools
+
+def _atomic_write(config: dict, path: Path) -> None:
+    fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".config.yaml.tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        os.replace(temp_path, path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+
 def validate_rule(rule: dict) -> tuple[bool, str]:
     if not rule.get("tool"):
         return False, "Tool is required"
