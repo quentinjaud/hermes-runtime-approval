@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import tempfile
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
@@ -8,9 +9,8 @@ from ruamel.yaml.comments import CommentedMap
 try:
     from hermes_constants import get_hermes_home
 except ImportError:
-    import os as _os
     def get_hermes_home() -> Path:
-        return Path(_os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+        return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 
 MATCHABLE_FIELDS = {
     "terminal": ["command", "workdir"],
@@ -159,8 +159,14 @@ def validate_rule(rule: dict) -> tuple[bool, str]:
         return False, "Action must be either 'approve' or 'block'"
 
     fields = rule.get("fields")
-    if fields is not None and not isinstance(fields, dict):
-        return False, "Fields must be a dictionary of regex patterns"
+    if fields is not None:
+        if not isinstance(fields, dict):
+            return False, "Fields must be a dictionary of regex patterns"
+        for fname, pattern in fields.items():
+            try:
+                re.compile(pattern)
+            except (re.error, TypeError) as e:
+                return False, f"Invalid regex in field '{fname}': {e}"
 
     message = rule.get("message")
     if message is not None and not isinstance(message, str):

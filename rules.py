@@ -66,11 +66,13 @@ def _parse_rules(config: Optional[dict]) -> List[ApprovalRule]:
             continue
 
         # Validate regex patterns in fields at load time
-        fields = rule_data.get("fields", {})
-        if isinstance(fields, dict):
-            for fname, pattern in fields.items():
+        raw_fields = rule_data.get("fields", {})
+        fields = {}
+        if isinstance(raw_fields, dict):
+            for fname, pattern in raw_fields.items():
                 try:
                     re.compile(pattern)
+                    fields[fname] = pattern
                 except (re.error, TypeError) as e:
                     logger.warning(
                         f"Rule '{tool}': invalid regex in field '{fname}': {e}. "
