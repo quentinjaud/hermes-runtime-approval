@@ -3,7 +3,7 @@
   "label": "Runtime Approval",
   "description": "Configure runtime approval rules for tool calls",
   "icon": "ShieldCheck",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "tab": {
     "path": "/runtime-approval",
     "position": "after:skills"

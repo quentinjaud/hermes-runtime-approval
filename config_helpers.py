@@ -1,8 +1,16 @@
 from pathlib import Path
-import yaml
+import json
 import os
 import tempfile
-from hermes_constants import get_hermes_home
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap
+
+try:
+    from hermes_constants import get_hermes_home
+except ImportError:
+    import os as _os
+    def get_hermes_home() -> Path:
+        return Path(_os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 
 MATCHABLE_FIELDS = {
     "terminal": ["command", "workdir"],
@@ -14,54 +22,79 @@ MATCHABLE_FIELDS = {
     "browser_navigate": ["url"],
 }
 
+_yaml = YAML()
+_yaml.preserve_quotes = True
+_yaml.indent(mapping=2, sequence=4, offset=2)
+
+
 def get_config_path() -> Path:
     return get_hermes_home() / "config.yaml"
 
-def read_rules() -> list[dict]:
+
+def _read_config_ruamel() -> CommentedMap:
+    """Read config.yaml preserving comments, formatting, and key order."""
     path = get_config_path()
     if not path.exists():
-        return []
-    try:
-        with open(path, "r") as f:
-            config = yaml.safe_load(f) or {}
-        return config.get("approvals", {}).get("custom_rules", [])
-    except Exception:
-        return []
+        return CommentedMap()
+    with open(path, "r") as f:
+        data = _yaml.load(f)
+    return data if data is not None else CommentedMap()
 
-def write_rules(rules: list[dict]) -> None:
+
+def _write_config_ruamel(config: CommentedMap) -> None:
+    """Atomic write preserving ruamel formatting."""
     path = get_config_path()
-    
-    # Read current config
-    if path.exists():
-        try:
-            with open(path, "r") as f:
-                config = yaml.safe_load(f) or {}
-        except Exception:
-            config = {}
-    else:
-        config = {}
-
-    # Update ONLY custom_rules
-    if "approvals" not in config:
-        config["approvals"] = {}
-    config["approvals"]["custom_rules"] = rules
-
-    # Atomic write
     fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".config.yaml.tmp")
     try:
         with os.fdopen(fd, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            _yaml.dump(config, f)
         os.replace(temp_path, path)
     except Exception:
         if os.path.exists(temp_path):
             os.remove(temp_path)
         raise
 
+
+def _normalize_exempt_tools(exempt) -> list:
+    """Handle string-as-list gracefully. Always returns a list."""
+    if isinstance(exempt, str):
+        try:
+            parsed = json.loads(exempt)
+            if isinstance(parsed, list):
+                return [str(t) for t in parsed]
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return [t.strip() for t in exempt.split(",") if t.strip()]
+    if isinstance(exempt, list):
+        return [str(t) for t in exempt]
+    return []
+
+
+def read_rules() -> list[dict]:
+    path = get_config_path()
+    if not path.exists():
+        return []
+    try:
+        config = _read_config_ruamel()
+        return list(config.get("approvals", {}).get("custom_rules", []) or [])
+    except Exception:
+        return []
+
+
+def write_rules(rules: list[dict]) -> None:
+    config = _read_config_ruamel()
+    if "approvals" not in config:
+        config["approvals"] = CommentedMap()
+    config["approvals"]["custom_rules"] = rules
+    _write_config_ruamel(config)
+
+
 def add_rule(rule: dict) -> list[dict]:
     rules = read_rules()
     rules.append(rule)
     write_rules(rules)
     return rules
+
 
 def update_rule(index: int, rule: dict) -> list[dict]:
     rules = read_rules()
@@ -70,6 +103,7 @@ def update_rule(index: int, rule: dict) -> list[dict]:
         write_rules(rules)
     return rules
 
+
 def delete_rule(index: int) -> list[dict]:
     rules = read_rules()
     if 0 <= index < len(rules):
@@ -77,89 +111,63 @@ def delete_rule(index: int) -> list[dict]:
         write_rules(rules)
     return rules
 
+
 def read_default_action() -> str | None:
-    path = get_config_path()
-    if not path.exists():
-        return None
     try:
-        with open(path, "r") as f:
-            config = yaml.safe_load(f) or {}
+        config = _read_config_ruamel()
         return config.get("approvals", {}).get("default_action")
     except Exception:
         return None
 
+
 def write_default_action(action: str | None) -> str | None:
-    """Set default_action. None clears it."""
-    path = get_config_path()
-    if path.exists():
-        try:
-            with open(path, "r") as f:
-                config = yaml.safe_load(f) or {}
-        except Exception:
-            config = {}
-    else:
-        config = {}
+    config = _read_config_ruamel()
     if "approvals" not in config:
-        config["approvals"] = {}
+        config["approvals"] = CommentedMap()
     if action is None:
         config["approvals"].pop("default_action", None)
     else:
         config["approvals"]["default_action"] = action
-    _atomic_write(config, path)
+    _write_config_ruamel(config)
     return action
 
+
 def read_exempt_tools() -> list[str]:
-    path = get_config_path()
-    if not path.exists():
-        return []
     try:
-        with open(path, "r") as f:
-            config = yaml.safe_load(f) or {}
-        return config.get("approvals", {}).get("exempt_tools", [])
+        config = _read_config_ruamel()
+        raw = config.get("approvals", {}).get("exempt_tools", [])
+        return _normalize_exempt_tools(raw)
     except Exception:
         return []
+
 
 def write_exempt_tools(tools: list[str]) -> list[str]:
-    path = get_config_path()
-    if path.exists():
-        try:
-            with open(path, "r") as f:
-                config = yaml.safe_load(f) or {}
-        except Exception:
-            config = {}
-    else:
-        config = {}
+    config = _read_config_ruamel()
     if "approvals" not in config:
-        config["approvals"] = {}
+        config["approvals"] = CommentedMap()
     config["approvals"]["exempt_tools"] = tools
-    _atomic_write(config, path)
+    _write_config_ruamel(config)
     return tools
 
-def _atomic_write(config: dict, path: Path) -> None:
-    fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".config.yaml.tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-        os.replace(temp_path, path)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise
 
 def validate_rule(rule: dict) -> tuple[bool, str]:
     if not rule.get("tool"):
         return False, "Tool is required"
-    
+
     action = rule.get("action")
     if action not in {"approve", "block"}:
         return False, "Action must be either 'approve' or 'block'"
-    
+
     fields = rule.get("fields")
     if fields is not None and not isinstance(fields, dict):
         return False, "Fields must be a dictionary of regex patterns"
-    
+
     message = rule.get("message")
     if message is not None and not isinstance(message, str):
         return False, "Message must be a string"
-        
+
+    rule_key = rule.get("rule_key")
+    if rule_key is not None and not isinstance(rule_key, str):
+        return False, "rule_key must be a string"
+
     return True, ""
