@@ -46,7 +46,7 @@
     const [defaultAction, setDefaultAction] = useState(null);
     const [exemptTools, setExemptTools] = useState([]);
 
-    const [newRule, setNewRule] = useState({ tool: '', action: 'approve', fields: {}, message: '' });
+    const [newRule, setNewRule] = useState({ tool: '', action: 'approve', fields: {}, message: '', rule_key: '' });
     const [dragTool, setDragTool] = useState(null);
 
     var fetchData = useCallback(async function () {
@@ -72,7 +72,13 @@
         tools.sort();
         setAllTools(tools);
         setDefaultAction((results[2] || {}).default_action || null);
-        setExemptTools((results[3] || {}).exempt_tools || []);
+        var rawExempt = (results[3] || {}).exempt_tools || [];
+        // Handle string-as-list (JSON string from yaml.dump artifact)
+        if (typeof rawExempt === 'string') {
+          try { rawExempt = JSON.parse(rawExempt); } catch (e) { rawExempt = rawExempt.split(',').map(function(t) { return t.trim(); }).filter(Boolean); }
+        }
+        if (!Array.isArray(rawExempt)) rawExempt = [];
+        setExemptTools(rawExempt);
       } catch (e) {
         setError(String(e.message || e));
       } finally {
@@ -91,7 +97,7 @@
           body: JSON.stringify(newRule)
         });
         setRules(updated || []);
-        setNewRule({ tool: '', action: 'approve', fields: {}, message: '' });
+        setNewRule({ tool: '', action: 'approve', fields: {}, message: '', rule_key: '' });
       } catch (e) {
         alert('Error adding rule: ' + (e.message || e));
       }
@@ -311,6 +317,7 @@
                             entry[0] + ': ' + entry[1]);
                         })
                       ),
+                      rule.rule_key ? h('div', { style: { fontSize: '11px', opacity: '0.5' } }, 'rule_key: ' + rule.rule_key) : null,
                       rule.message ? h('div', { style: { fontSize: '12px', opacity: '0.7' } }, rule.message) : null
                     ]),
                     h(Button, {
@@ -389,6 +396,17 @@
               onChange: function (e) { setNewRule(Object.assign({}, newRule, { message: e.target.value })); },
               placeholder: 'Reason shown in the approval prompt'
             })
+          ]),
+          // Rule Key
+          h('div', { style: { marginBottom: '16px' } }, [
+            h(Label, { style: { display: 'block', marginBottom: '4px' } }, 'Rule Key (optional)'),
+            h(Input, {
+              value: newRule.rule_key,
+              onChange: function (e) { setNewRule(Object.assign({}, newRule, { rule_key: e.target.value })); },
+              placeholder: 'e.g. write_file:ssh - per-rule [a]lways grain'
+            }),
+            h('p', { style: { fontSize: '11px', opacity: '0.5', marginTop: '4px' } },
+              'Controls the [a]lways allowlist grain. Answering [a]lways only auto-approves this specific rule.')
           ]),
           h(Button, { onClick: addRule }, 'Add Rule')
         ])
