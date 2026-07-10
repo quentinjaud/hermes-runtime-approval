@@ -3,6 +3,8 @@ import json
 import os
 import re
 import tempfile
+import fcntl
+import contextlib
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
@@ -26,6 +28,29 @@ _yaml = YAML()
 _yaml.preserve_quotes = True
 _yaml.indent(mapping=2, sequence=4, offset=2)
 
+_LOCK_PATH = None
+
+
+def _lock():
+    """File lock to prevent concurrent read-modify-write races on config.yaml."""
+    global _LOCK_PATH
+    if _LOCK_PATH is None:
+        _LOCK_PATH = get_config_path().parent / ".config.yaml.lock"
+    f = open(_LOCK_PATH, "w")
+    fcntl.flock(f, fcntl.LOCK_EX)
+    return f
+
+
+@contextlib.contextmanager
+def _config_lock():
+    """Context manager that acquires and releases the config file lock."""
+    f = _lock()
+    try:
+        yield
+    finally:
+        fcntl.flock(f, fcntl.LOCK_UN)
+        f.close()
+
 
 def get_config_path() -> Path:
     return get_hermes_home() / "config.yaml"
@@ -36,7 +61,7 @@ def _read_config_ruamel() -> CommentedMap:
     path = get_config_path()
     if not path.exists():
         return CommentedMap()
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         data = _yaml.load(f)
     return data if data is not None else CommentedMap()
 
@@ -46,7 +71,7 @@ def _write_config_ruamel(config: CommentedMap) -> None:
     path = get_config_path()
     fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=".config.yaml.tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             _yaml.dump(config, f)
         os.replace(temp_path, path)
     except Exception:
@@ -82,11 +107,12 @@ def read_rules() -> list[dict]:
 
 
 def write_rules(rules: list[dict]) -> None:
-    config = _read_config_ruamel()
-    if "approvals" not in config:
-        config["approvals"] = CommentedMap()
-    config["approvals"]["custom_rules"] = rules
-    _write_config_ruamel(config)
+    with _config_lock():
+        config = _read_config_ruamel()
+        if "approvals" not in config:
+            config["approvals"] = CommentedMap()
+        config["approvals"]["custom_rules"] = rules
+        _write_config_ruamel(config)
 
 
 def add_rule(rule: dict) -> list[dict]:
@@ -121,15 +147,16 @@ def read_default_action() -> str | None:
 
 
 def write_default_action(action: str | None) -> str | None:
-    config = _read_config_ruamel()
-    if "approvals" not in config:
-        config["approvals"] = CommentedMap()
-    if action is None:
-        config["approvals"].pop("default_action", None)
-    else:
-        config["approvals"]["default_action"] = action
-    _write_config_ruamel(config)
-    return action
+    with _config_lock():
+        config = _read_config_ruamel()
+        if "approvals" not in config:
+            config["approvals"] = CommentedMap()
+        if action is None:
+            config["approvals"].pop("default_action", None)
+        else:
+            config["approvals"]["default_action"] = action
+        _write_config_ruamel(config)
+        return action
 
 
 def read_exempt_tools() -> list[str]:
@@ -142,12 +169,20 @@ def read_exempt_tools() -> list[str]:
 
 
 def write_exempt_tools(tools: list[str]) -> list[str]:
-    config = _read_config_ruamel()
-    if "approvals" not in config:
-        config["approvals"] = CommentedMap()
-    config["approvals"]["exempt_tools"] = tools
-    _write_config_ruamel(config)
-    return tools
+    # Deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for t in tools:
+        if t not in seen:
+            seen.add(t)
+            deduped.append(t)
+    with _config_lock():
+        config = _read_config_ruamel()
+        if "approvals" not in config:
+            config["approvals"] = CommentedMap()
+        config["approvals"]["exempt_tools"] = deduped
+        _write_config_ruamel(config)
+        return deduped
 
 
 def validate_rule(rule: dict) -> tuple[bool, str]:

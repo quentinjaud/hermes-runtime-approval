@@ -60,13 +60,15 @@
           fetchJSON(API + '/exempt-tools')
         ]);
         setRules(results[0] || []);
-        // Flatten toolsets → sorted list of tool names
+        // Flatten toolsets → sorted list of unique tool names
         var toolsets = results[1] || [];
+        var seen = {};
         var tools = [];
         for (var i = 0; i < toolsets.length; i++) {
           var tsTools = toolsets[i].tools || [];
           for (var j = 0; j < tsTools.length; j++) {
-            tools.push(tsTools[j]);
+            var t = tsTools[j];
+            if (!seen[t]) { seen[t] = true; tools.push(t); }
           }
         }
         tools.sort();
