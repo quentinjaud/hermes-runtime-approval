@@ -1,7 +1,13 @@
 import re
 import json
-import yaml
 import logging
+
+# PyYAML is not a Hermes runtime dependency (the core uses its own hermes_yaml/ruamel seam).
+# A bare `import yaml` breaks plugin load with ModuleNotFoundError on the gateway runtime.
+try:
+    import hermes_yaml as yaml
+except ImportError:  # standalone mode (tests, dev outside the Hermes tree)
+    import yaml
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional, Set

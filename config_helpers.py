@@ -185,6 +185,31 @@ def write_exempt_tools(tools: list[str]) -> list[str]:
         return deduped
 
 
+def read_command_allowlist() -> list[str]:
+    """Read command_allowlist from config.yaml (core Hermes permanent approvals).
+
+    Returns the raw list. The dashboard uses this to show tools that were
+    permanently approved via the 'Always Allow' button (which writes to
+    command_allowlist, not to approvals.exempt_tools).
+    """
+    try:
+        config = _read_config_ruamel()
+        raw = config.get("command_allowlist", []) or []
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(t) for t in parsed]
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return [t.strip() for t in raw.split(",") if t.strip()]
+        if isinstance(raw, list):
+            return [str(t) for t in raw]
+        return []
+    except Exception:
+        return []
+
+
 def validate_rule(rule: dict) -> tuple[bool, str]:
     if not rule.get("tool"):
         return False, "Tool is required"

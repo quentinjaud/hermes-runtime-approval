@@ -45,9 +45,11 @@
 
     const [defaultAction, setDefaultAction] = useState(null);
     const [exemptTools, setExemptTools] = useState([]);
+    const [permanentAllowed, setPermanentAllowed] = useState([]);
 
     const [newRule, setNewRule] = useState({ tool: '', action: 'approve', fields: {}, message: '', rule_key: '' });
     const [dragTool, setDragTool] = useState(null);
+    const [searchQuery, setSearchQuery] = useState('');
 
     var fetchData = useCallback(async function () {
       setLoading(true);
@@ -57,7 +59,8 @@
           fetchJSON(API + '/rules'),
           fetchJSON('/api/tools/toolsets'),
           fetchJSON(API + '/default-action'),
-          fetchJSON(API + '/exempt-tools')
+          fetchJSON(API + '/exempt-tools'),
+          fetchJSON(API + '/command-allowlist')
         ]);
         setRules(results[0] || []);
         // Flatten toolsets → sorted list of unique tool names
@@ -71,8 +74,6 @@
             if (!seen[t]) { seen[t] = true; tools.push(t); }
           }
         }
-        tools.sort();
-        setAllTools(tools);
         setDefaultAction((results[2] || {}).default_action || null);
         var rawExempt = (results[3] || {}).exempt_tools || [];
         // Handle string-as-list (JSON string from yaml.dump artifact)
@@ -81,6 +82,27 @@
         }
         if (!Array.isArray(rawExempt)) rawExempt = [];
         setExemptTools(rawExempt);
+        // Extract plugin_rule:* entries from command_allowlist (permanent approvals)
+        var rawAllowlist = (results[4] || {}).command_allowlist || [];
+        var pluginRules = [];
+        for (var k = 0; k < rawAllowlist.length; k++) {
+          var entry = rawAllowlist[k];
+          if (typeof entry === 'string' && entry.indexOf('plugin_rule:') === 0) {
+            var toolName = entry.substring('plugin_rule:'.length);
+            if (toolName) pluginRules.push(toolName);
+          }
+        }
+        setPermanentAllowed(pluginRules);
+        // Merge plugin-provided tools (from command_allowlist) into allTools
+        // so they appear in the Trusted column even if not in a standard toolset.
+        for (var p = 0; p < pluginRules.length; p++) {
+          if (!seen[pluginRules[p]]) {
+            seen[pluginRules[p]] = true;
+            tools.push(pluginRules[p]);
+          }
+        }
+        tools.sort();
+        setAllTools(tools);
       } catch (e) {
         setError(String(e.message || e));
       } finally {
@@ -128,10 +150,13 @@
     }
 
     // Tools that require runtime approval = all tools NOT in exempt list
+    // and NOT in permanentAllowed (core command_allowlist)
     function getApproveRequiredTools() {
       var exemptSet = {};
       exemptTools.forEach(function (t) { exemptSet[t] = true; });
-      return allTools.filter(function (t) { return !exemptSet[t]; });
+      var permSet = {};
+      permanentAllowed.forEach(function (t) { permSet[t] = true; });
+      return allTools.filter(function (t) { return !exemptSet[t] && !permSet[t]; });
     }
 
     // Drag-and-drop: move tool to trusted (exempt)
@@ -175,6 +200,18 @@
     var approveRequired = getApproveRequiredTools();
     var matchableFields = getMatchableFields(newRule.tool);
 
+    // Search filter (case-insensitive, applied to both columns)
+    var q = searchQuery.trim().toLowerCase();
+    var filteredApproveRequired = q
+      ? approveRequired.filter(function (t) { return t.toLowerCase().indexOf(q) !== -1; })
+      : approveRequired;
+    var filteredExempt = q
+      ? exemptTools.filter(function (t) { return t.toLowerCase().indexOf(q) !== -1; })
+      : exemptTools;
+    var filteredPermanent = q
+      ? permanentAllowed.filter(function (t) { return t.toLowerCase().indexOf(q) !== -1; })
+      : permanentAllowed;
+
     return h('div', { style: { padding: '24px', maxWidth: '900px', margin: '0 auto' } }, [
       // Header
       h('div', { style: { marginBottom: '24px' } }, [
@@ -205,6 +242,16 @@
         ])
       ]),
 
+      // Search bar (filters both columns)
+      h('div', { style: { marginBottom: '16px' } }, [
+        h(Input, {
+          value: searchQuery,
+          onChange: function (e) { setSearchQuery(e.target.value); },
+          placeholder: 'Search tools by name... (filters both columns)',
+          style: { width: '100%' }
+        })
+      ]),
+
       // Drag-and-drop: Approve Required vs Trusted
       h('div', { style: { display: 'flex', gap: '16px', marginBottom: '24px' } }, [
         // Left column: Approve Required
@@ -221,11 +268,11 @@
           h(CardContent, { style: { padding: '12px' } }, [
             h('h3', { style: { fontSize: '14px', fontWeight: '600', marginBottom: '12px' } }, 'Runtime Approve Required'),
             h('p', { style: { fontSize: '11px', opacity: '0.5', marginBottom: '8px' } },
-              approveRequired.length + ' tools'),
+              filteredApproveRequired.length + ' tools' + (q && filteredApproveRequired.length !== approveRequired.length ? ' (of ' + approveRequired.length + ')' : '')),
             h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-              approveRequired.length === 0
-                ? h('p', { style: { opacity: '0.4', fontSize: '13px' } }, 'All tools are trusted.')
-                : approveRequired.map(function (tool) {
+              filteredApproveRequired.length === 0
+                ? h('p', { style: { opacity: '0.4', fontSize: '13px' } }, q ? 'No matching tools.' : 'All tools are trusted.')
+                : filteredApproveRequired.map(function (tool) {
                     return h('div', {
                       key: tool,
                       draggable: true,
@@ -249,7 +296,7 @@
           ])
         ]),
 
-        // Right column: Trusted (exempt)
+        // Right column: Trusted (exempt + permanent)
         h(Card, {
           style: { flex: '1', minHeight: '200px' },
           onDragOver: function (e) { e.preventDefault(); },
@@ -263,30 +310,54 @@
           h(CardContent, { style: { padding: '12px' } }, [
             h('h3', { style: { fontSize: '14px', fontWeight: '600', marginBottom: '12px' } }, 'Trusted (Exempt)'),
             h('p', { style: { fontSize: '11px', opacity: '0.5', marginBottom: '8px' } },
-              exemptTools.length + ' tools'),
+              (filteredExempt.length + filteredPermanent.length) + ' tools' + (q && (filteredExempt.length + filteredPermanent.length) !== (exemptTools.length + permanentAllowed.length) ? ' (of ' + (exemptTools.length + permanentAllowed.length) + ')' : '')),
             h('div', { style: { display: 'flex', flexDirection: 'column', gap: '4px' } },
-              exemptTools.length === 0
-                ? h('p', { style: { opacity: '0.4', fontSize: '13px' } }, 'No trusted tools. Drag here to exempt.')
-                : exemptTools.map(function (tool) {
-                    return h('div', {
-                      key: tool,
-                      draggable: true,
-                      onDragStart: function (e) {
-                        e.dataTransfer.setData('text/plain', tool);
-                        e.dataTransfer.effectAllowed = 'move';
-                        setDragTool(tool);
-                      },
-                      onDragEnd: function () { setDragTool(null); },
-                      style: {
-                        padding: '6px 10px',
-                        borderRadius: '6px',
-                        border: '1px solid var(--border)',
-                        cursor: 'grab',
-                        opacity: dragTool === tool ? '0.4' : '1',
-                        fontSize: '13px'
-                      }
-                    }, h(Badge, { variant: 'outline' }, tool));
-                  })
+              (filteredExempt.length === 0 && filteredPermanent.length === 0)
+                ? h('p', { style: { opacity: '0.4', fontSize: '13px' } }, q ? 'No matching tools.' : 'No trusted tools. Drag here to exempt.')
+                : [
+                    // Exempt tools (draggable, managed by plugin)
+                    filteredExempt.map(function (tool) {
+                      return h('div', {
+                        key: 'exempt:' + tool,
+                        draggable: true,
+                        onDragStart: function (e) {
+                          e.dataTransfer.setData('text/plain', tool);
+                          e.dataTransfer.effectAllowed = 'move';
+                          setDragTool(tool);
+                        },
+                        onDragEnd: function () { setDragTool(null); },
+                        style: {
+                          padding: '6px 10px',
+                          borderRadius: '6px',
+                          border: '1px solid var(--border)',
+                          cursor: 'grab',
+                          opacity: dragTool === tool ? '0.4' : '1',
+                          fontSize: '13px'
+                        }
+                      }, h(Badge, { variant: 'outline' }, tool));
+                    }),
+                    // Permanent approvals (read-only, from core command_allowlist)
+                    filteredPermanent
+                      .filter(function (tool) { return exemptTools.indexOf(tool) === -1; })
+                      .map(function (tool) {
+                        return h('div', {
+                          key: 'perm:' + tool,
+                          style: {
+                            padding: '6px 10px',
+                            borderRadius: '6px',
+                            border: '1px solid var(--border)',
+                            opacity: '0.75',
+                            fontSize: '13px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }
+                        }, [
+                          h(Badge, { variant: 'outline' }, tool),
+                          h('span', { style: { fontSize: '10px', opacity: '0.6' } }, 'permanent')
+                        ]);
+                      })
+                  ]
             )
           ])
         ])

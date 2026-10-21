@@ -11,6 +11,7 @@ from config_helpers import (
     read_rules, write_rules, add_rule, update_rule, delete_rule, validate_rule,
     read_default_action, write_default_action,
     read_exempt_tools, write_exempt_tools,
+    read_command_allowlist,
     MATCHABLE_FIELDS,
 )
 
@@ -72,3 +73,13 @@ def set_exempt_tools(body: dict):
     if not isinstance(tools, list):
         raise HTTPException(status_code=400, detail="exempt_tools must be a list of strings")
     return {"exempt_tools": write_exempt_tools(tools)}
+
+@router.get("/command-allowlist")
+def get_command_allowlist():
+    """Return the core command_allowlist (permanent approvals from 'Always Allow').
+
+    These are pattern keys (e.g. 'plugin_rule:viking_remember') written by
+    the core Hermes approval system when the user clicks 'Always Allow'.
+    The dashboard merges them into the Trusted column for display.
+    """
+    return {"command_allowlist": read_command_allowlist()}

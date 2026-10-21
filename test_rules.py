@@ -1,9 +1,17 @@
 import pytest
 import json
-import yaml
 import re
 from pathlib import Path
 from unittest.mock import patch, mock_open
+
+try:
+    import hermes_yaml as yaml
+except ImportError:  # standalone mode (tests, dev outside the Hermes tree)
+    import yaml
+
+# hermes_yaml exposes safe_dump (no plain `dump`); PyYAML exposes both.
+_dump = getattr(yaml, "dump", None) or yaml.safe_dump
+
 from rules import (
     load_rules, match_rule, evaluate,
     load_default_action, load_exempt_tools,
@@ -13,7 +21,7 @@ from rules import (
 
 def _mock_config(config_data: dict):
     """Helper: mock open() to return YAML-serialized config."""
-    return mock_open(read_data=yaml.dump(config_data))
+    return mock_open(read_data=_dump(config_data))
 
 
 # --- Config loading ---
